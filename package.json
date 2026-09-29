@@ -1,0 +1,15 @@
+{
+  "name": "apple-thread-full-project",
+  "version": "1.0.0",
+  "description": "Apple Thread Full-Stack E-Commerce Project with SQLite Database and Express Backend",
+  "main": "run-all.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node run-all.js",
+    "start": "node run-all.js",
+    "start:backend": "node --no-warnings backend/server.js",
+    "start:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build"
+  },
+  "keywords": ["apple-thread", "ecommerce", "react", "express", "sqlite"]
+}
