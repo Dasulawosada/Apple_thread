@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="origin" />
+  <title>PayHere Sandbox Checkout — Week 07 Lab (Apple Thread)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <style>
+    :root {
+      --primary: #004B8D;
+      --navy: #1F3D2E;
+      --accent: #E67E22;
+      --bg: #F4F6F9;
+      --card-bg: #FFFFFF;
+      --text: #2D3748;
+      --border: #E2E8F0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 30px 15px; }
+    .container { max-width: 860px; margin: 0 auto; }
+    .header-box { text-align: center; margin-bottom: 25px; }
+    .header-box h1 { font-size: 26px; color: var(--navy); margin-bottom: 6px; }
+    .badge { display: inline-block; background: #EBF8FF; color: #2B6CB0; border: 1px solid #BEE3F8; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+    .layout { display: grid; grid-template-columns: 1fr 340px; gap: 24px; }
+    @media (max-width: 768px) { .layout { grid-template-columns: 1fr; } }
+    .card { background: var(--card-bg); border-radius: 12px; padding: 22px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); border: 1px solid var(--border); }
+    h2 { font-size: 17px; margin-bottom: 16px; color: var(--navy); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-size: 12px; font-weight: 600; color: #4A5568; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input[type="text"], input[type="email"], input[type="number"], select {
+      width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; font-size: 14px; transition: border 0.2s;
+    }
+    input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px rgba(0,75,141,0.15); }
+    .row { display: flex; gap: 12px; }
+    .col { flex: 1; }
+    .btn-pay {
+      width: 100%; background: var(--primary); color: white; border: none; padding: 14px; border-radius: 8px;
+      font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.2s; margin-top: 14px;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-pay:hover { background: #003666; }
+    .summary-item { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 14px; }
+    .summary-total { display: flex; justify-content: space-between; margin-top: 14px; padding-top: 14px; border-top: 2px dashed var(--border); font-size: 18px; font-weight: 800; color: var(--navy); }
+    .test-cards-box { margin-top: 20px; background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px; padding: 14px; font-size: 13px; }
+    .test-cards-box strong { color: #92400E; display: block; margin-bottom: 6px; }
+    .card-num { font-family: monospace; background: #FEF3C7; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #78350F; }
+    .hash-preview-box { margin-top: 20px; background: #F8FAFC; border: 1px solid #CBD5E1; border-radius: 10px; padding: 14px; font-size: 12px; }
+    .hash-preview-box pre { font-family: monospace; word-break: break-all; white-space: pre-wrap; color: #334155; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <div class="header-box">
+    <span class="badge">E-Business Systems • Week 07 Lab</span>
+    <h1 style="margin-top: 8px;">🧵 Apple Thread — PayHere Sandbox Checkout</h1>
+    <p style="color: #64748B; font-size: 14px;">Secure Online Payment Integration with Real-time MD5 Tamper-Proof Hash</p>
+  </div>
+
+  <div class="layout">
+    <!-- Left: Form -->
+    <div class="card">
+      <h2>1. Customer & Delivery Information</h2>
+      <!-- The PayHere Form POSTing to Sandbox -->
+      <form id="payhere_form" method="POST" action="https://sandbox.payhere.lk/pay/checkout">
+        
+        <!-- PayHere Required Hidden / Pre-filled Parameters -->
+        <input type="hidden" name="merchant_id" id="merchant_id" value="1238361" />
+        <input type="hidden" name="return_url" id="return_url" value="http://localhost:5173/order-confirmation/AT-LAB-DEMO?payhere=success" />
+        <input type="hidden" name="cancel_url" id="cancel_url" value="http://localhost:5173/checkout?payment=cancelled" />
+        <input type="hidden" name="notify_url" id="notify_url" value="http://localhost:5000/api/orders/payhere-notify" />
+        <input type="hidden" name="currency" id="currency" value="LKR" />
+        <input type="hidden" name="hash" id="hash" value="" />
+
+        <!-- Merchant Secret (used locally to generate hash, never posted directly) -->
+        <input type="hidden" id="merchant_secret" value="OTA0NDc2MTQwMjczMTY3MzU0NzEzMDU4NDk3MzM3NTg5NzczNzY=" />
+
+        <div class="row">
+          <div class="col form-group">
+            <label>First Name *</label>
+            <input type="text" name="first_name" id="first_name" value="Dasula" required />
+          </div>
+          <div class="col form-group">
+            <label>Last Name *</label>
+            <input type="text" name="last_name" id="last_name" value="Thenuwara" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Email Address *</label>
+          <input type="email" name="email" id="email" value="customer@applethread.lk" required />
+        </div>
+
+        <div class="form-group">
+          <label>Phone Number *</label>
+          <input type="text" name="phone" id="phone" value="0771234567" required />
+        </div>
+
+        <div class="form-group">
+          <label>Address *</label>
+          <input type="text" name="address" id="address" value="466/1, Galle Road" required />
+        </div>
+
+        <div class="row">
+          <div class="col form-group">
+            <label>City *</label>
+            <input type="text" name="city" id="city" value="Colombo" required />
+          </div>
+          <div class="col form-group">
+            <label>Country *</label>
+            <input type="text" name="country" id="country" value="Sri Lanka" required />
+          </div>
+        </div>
+
+        <h2 style="margin-top: 18px;">2. Order Information</h2>
+        
+        <div class="row">
+          <div class="col form-group">
+            <label>Order ID (Auto-generated)</label>
+            <input type="text" name="order_id" id="order_id" readonly />
+          </div>
+          <div class="col form-group">
+            <label>Amount (LKR) *</label>
+            <input type="number" step="0.01" name="amount" id="amount" value="1000.00" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Items Description</label>
+          <input type="text" name="items" id="items" value="Apple Thread - Silk Spool & Cotton Thread" required />
+        </div>
+
+        <button type="submit" class="btn-pay" id="pay_btn">
+          🔒 Pay with PayHere (Sandbox)
+        </button>
+      </form>
+    </div>
+
+    <!-- Right: Summary & Testing Guide -->
+    <div>
+      <div class="card">
+        <h2>Order Summary</h2>
+        <div class="summary-item">
+          <span>Premium Silk Spool (x2)</span>
+          <strong>Rs. 750.00</strong>
+        </div>
+        <div class="summary-item">
+          <span>Cotton Thread Cone (x1)</span>
+          <strong>Rs. 250.00</strong>
+        </div>
+        <div class="summary-item" style="color: #1E7E34;">
+          <span>Delivery Fee</span>
+          <strong>FREE</strong>
+        </div>
+        <div class="summary-total">
+          <span>Total Payable</span>
+          <span id="display_total">Rs. 1000.00</span>
+        </div>
+      </div>
+
+      <!-- Test Card Credentials (From Week 07 Slide 9) -->
+      <div class="test-cards-box">
+        <strong>💳 Sandbox Test Cards (Week 07 Slide 9):</strong>
+        <div style="margin-bottom: 8px;">
+          <b>Visa Test Card:</b><br />
+          <span class="card-num">4916 2175 0161 1292</span><br />
+          <small>Expiry: 12/28 | CVV: 123</small>
+        </div>
+        <div>
+          <b>MasterCard Test Card:</b><br />
+          <span class="card-num">5307 7321 2553 1191</span><br />
+          <small>Expiry: 12/28 | CVV: 123</small>
+        </div>
+      </div>
+
+      <!-- Live Hash Calculation Preview (Week 07 Slide 8) -->
+      <div class="hash-preview-box">
+        <strong>🔐 MD5 Security Hash (Week 07 Formula):</strong>
+        <pre id="hash_preview">Calculating hash...</pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 1. Generate unique random Order ID on load
+  const randomOrderId = "AT-" + Math.floor(10000 + Math.random() * 89999);
+  document.getElementById("order_id").value = randomOrderId;
+
+  // 2. MD5 Hash Calculation according to Week 07 Slide 8:
+  // Hash = UPPERCASE( MD5( merchant_id + order_id + amount + currency + UPPERCASE( MD5( merchant_secret ) ) ) )
+  function calculatePayHereHash() {
+    const merchantId = document.getElementById("merchant_id").value.trim();
+    const merchantSecret = document.getElementById("merchant_secret").value.trim();
+    const orderId = document.getElementById("order_id").value.trim();
+    const amountVal = parseFloat(document.getElementById("amount").value) || 0;
+    const amount = amountVal.toFixed(2); // Strict 2 decimal places format
+    const currency = document.getElementById("currency").value.trim();
+
+    const hashedSecret = CryptoJS.MD5(merchantSecret).toString().toUpperCase();
+    const hashString = merchantId + orderId + amount + currency + hashedSecret;
+    const generatedHash = CryptoJS.MD5(hashString).toString().toUpperCase();
+
+    document.getElementById("hash").value = generatedHash;
+    document.getElementById("display_total").innerText = `Rs. ${amount}`;
+    document.getElementById("hash_preview").innerText = 
+      `Amount: ${amount}\nSecret Hash: ${hashedSecret.slice(0, 10)}...\nFinal Hash:\n${generatedHash}`;
+    
+    return generatedHash;
+  }
+
+  // Update hash when amount changes
+  document.getElementById("amount").addEventListener("input", calculatePayHereHash);
+
+  // Initial calculation on load
+  calculatePayHereHash();
+
+  // Attach submit handler (Week 07 Slide 7)
+  document.getElementById("payhere_form").addEventListener("submit", function(e) {
+    const finalHash = calculatePayHereHash();
+    console.log("Form Submitting to PayHere Sandbox with Hash:", finalHash);
+  });
+</script>
+
+</body>
+</html>

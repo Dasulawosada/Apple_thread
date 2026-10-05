@@ -3,13 +3,31 @@ import { useParams, useLocation, Link } from "react-router-dom";
 import "../App.css";
 import SiteHeader from "../SiteHeader";
 import { api, getImageUrl } from "../api/client";
+import { useCart } from "../context/CartContext";
 import BackButton from "../BackButton";
 
 function OrderConfirmation() {
   const { orderId } = useParams();
   const location = useLocation();
+  const { clearCart } = useCart();
+  const searchParams = new URLSearchParams(location.search);
+  const isPayHereSuccess = searchParams.get("payhere") === "success";
+
   const [order, setOrder] = useState(location.state?.order || null);
   const [loading, setLoading] = useState(!order);
+
+  useEffect(() => {
+    if (isPayHereSuccess) {
+      clearCart();
+      if (orderId) {
+        api.confirmOrderPayment(orderId)
+          .then((updated) => {
+            if (updated) setOrder(updated);
+          })
+          .catch((err) => console.error("Could not confirm PayHere order:", err));
+      }
+    }
+  }, [isPayHereSuccess, orderId]);
 
   useEffect(() => {
     if (!order && orderId) {
@@ -70,6 +88,33 @@ function OrderConfirmation() {
           </div>
         ) : (
           <div className="confirmation-receipt-card">
+            {isPayHereSuccess && (
+              <div style={{
+                background: "#EDF7ED",
+                border: "1px solid #B7DFB9",
+                color: "#1E4620",
+                padding: "14px 18px",
+                borderRadius: 8,
+                marginBottom: 22,
+                display: "flex",
+                alignItems: "center",
+                gap: 14
+              }}>
+                <span style={{ fontSize: 26 }}>✅</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span>Payment Verified via PayHere Sandbox</span>
+                    <span style={{ fontSize: 11, background: "#004B8D", color: "#fff", padding: "2px 8px", borderRadius: 4 }}>
+                      Merchant ID: 1238361
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 13, color: "#2E5B30", marginTop: 3 }}>
+                    Your transaction was successfully authorized using PayHere Sandbox test cards. Order status is now confirmed.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Fulfillment Tracker */}
             <div className="order-stepper-wrap">
               <h3 style={{ margin: "0 0 16px", fontSize: 15, color: "var(--navy)" }}>Order Progress</h3>

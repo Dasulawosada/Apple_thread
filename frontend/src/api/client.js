@@ -1,5 +1,5 @@
-const API_BASE = "http://localhost:5000/api";
-export const SERVER_URL = "http://localhost:5000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:5000/api";
+export const SERVER_URL = import.meta.env.VITE_SERVER_URL || "http://localhost:5000";
 
 // Helper to resolve image paths (Unsplash, local uploads, or external URLs)
 export function getImageUrl(url) {
@@ -167,6 +167,19 @@ export const api = {
     return request(`/orders/${id}/status`, {
       method: "PATCH",
       body: JSON.stringify({ status }),
+    });
+  },
+
+  async confirmOrderPayment(id) {
+    return request(`/orders/${id}/confirm-payment`, {
+      method: "POST",
+    });
+  },
+
+  async generatePayHereHash(orderId, amount, currency = "LKR") {
+    return request("/orders/payhere-hash", {
+      method: "POST",
+      body: JSON.stringify({ orderId, amount, currency }),
     });
   },
 

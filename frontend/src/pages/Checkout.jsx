@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+import CryptoJS from "crypto-js";
 import "../App.css";
 import SiteHeader from "../SiteHeader";
 import { useCart } from "../context/CartContext";
@@ -15,6 +16,10 @@ function Checkout() {
   const { fetchProducts } = useProducts();
   const { settings } = useSettings();
   const navigate = useNavigate();
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const paymentCancelled = searchParams.get("payment") === "cancelled";
+
   const addressesKey = `apple-thread-addresses_${user?.id || "guest"}`;
   const [savedAddresses] = useState(() => {
     try {
@@ -45,12 +50,13 @@ function Checkout() {
 
   const [form, setForm] = useState({
     name: defaultAddress?.name || user?.name || "",
+    email: defaultAddress?.email || user?.email || "",
     phone: defaultAddress?.phone || user?.phone || "",
     address: defaultAddress?.street || "",
     city: defaultAddress?.city || "",
     postal: defaultAddress?.postal || "",
   });
-  const [paymentMethod, setPaymentMethod] = useState("Cash on Delivery");
+  const [paymentMethod, setPaymentMethod] = useState("PayHere");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -68,6 +74,7 @@ function Checkout() {
     if (address) {
       setForm({
         name: address.name,
+        email: address.email || user?.email || "",
         phone: address.phone,
         address: address.street,
         city: address.city,
@@ -88,13 +95,68 @@ function Checkout() {
         items,
         address: form,
         paymentMethod,
-        email: user?.email || "",
+        email: form.email || user?.email || "",
       };
 
       const createdOrder = await api.createOrder(orderPayload);
 
       // Refresh product stock in context
       fetchProducts();
+
+      if (paymentMethod === "PayHere") {
+        const baseUrl = window.location.origin;
+        const fmtAmount = Number(total).toFixed(2);
+        const merchantId = "1238361";
+        const merchantSecret = "OTA0NDc2MTQwMjczMTY3MzU0NzEzMDU4NDk3MzM3NTg5NzczNzY=";
+
+        // PayHere Sandbox MD5 Hash Formula (Week 07 Lab)
+        const cryptoLib = (typeof CryptoJS !== "undefined" && CryptoJS.MD5) ? CryptoJS : window.CryptoJS;
+        const hashedSecret = cryptoLib.MD5(merchantSecret).toString().toUpperCase();
+        const hashString = merchantId + createdOrder.id + fmtAmount + "LKR" + hashedSecret;
+        const generatedHash = cryptoLib.MD5(hashString).toString().toUpperCase();
+
+        const nameParts = (form.name || "").trim().split(/\s+/);
+        const firstName = nameParts[0] || "Customer";
+        const lastName = nameParts.slice(1).join(" ") || "AppleThread";
+        const itemsDesc = items.map((i) => `${i.name} (x${i.qty})`).join(", ").slice(0, 200) || "Apple Thread Order";
+
+        const payhereData = {
+          merchant_id: merchantId,
+          return_url: `${baseUrl}/order-confirmation/${createdOrder.id}?payhere=success`,
+          cancel_url: `${baseUrl}/checkout?payment=cancelled`,
+          notify_url: "http://localhost:5000/api/orders/payhere-notify",
+          order_id: createdOrder.id,
+          items: itemsDesc,
+          currency: "LKR",
+          amount: fmtAmount,
+          first_name: firstName,
+          last_name: lastName,
+          email: form.email || "customer@applethread.lk",
+          phone: form.phone,
+          address: form.address,
+          city: form.city,
+          country: "Sri Lanka",
+          hash: generatedHash,
+        };
+
+        clearCart();
+
+        const formEl = document.createElement("form");
+        formEl.method = "POST";
+        formEl.action = "https://sandbox.payhere.lk/pay/checkout";
+
+        Object.entries(payhereData).forEach(([key, val]) => {
+          const input = document.createElement("input");
+          input.type = "hidden";
+          input.name = key;
+          input.value = val;
+          formEl.appendChild(input);
+        });
+
+        document.body.appendChild(formEl);
+        formEl.submit();
+        return;
+      }
 
       clearCart();
       navigate(`/order-confirmation/${createdOrder.id}`, { state: { total, order: createdOrder } });
@@ -126,6 +188,12 @@ function Checkout() {
         <div className="page-back-row"><BackButton to="/cart" /></div>
         <h1 className="page-title" style={{ marginBottom: 20 }}>Checkout & Delivery</h1>
 
+        {paymentCancelled && (
+          <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B", color: "#92400E", padding: "12px 16px", borderRadius: 8, marginBottom: 20, fontSize: 14 }}>
+            ⚠️ <strong>Payment Cancelled:</strong> Your PayHere transaction was not completed. You can try again below or select another payment method.
+          </div>
+        )}
+
         {error && (
           <div style={{ background: "#FDE8E8", color: "#9B1C1C", padding: "12px 16px", borderRadius: 8, marginBottom: 20, fontSize: 14 }}>
             ⚠️ {error}
@@ -134,7 +202,7 @@ function Checkout() {
 
         <form className="checkout-layout" onSubmit={placeOrder}>
           <div className="checkout-form">
-            <h2 style={{ fontSize: 16, marginBottom: 14 }}>1. Delivery Address</h2>
+            <h2 style={{ fontSize: 16, marginBottom: 14 }}>1. Customer & Delivery Address</h2>
             {savedAddresses.length > 0 && (
               <div style={{ marginBottom: 12 }}>
                 <label className="label" htmlFor="saved-address-select">Use a saved delivery address</label>
@@ -161,6 +229,18 @@ function Checkout() {
                 required
                 value={form.name}
                 onChange={(e) => update("name", e.target.value)}
+              />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <span className="label">Email Address *</span>
+              <input
+                className="input-plain"
+                type="email"
+                placeholder="e.g. customer@example.com"
+                required
+                value={form.email}
+                onChange={(e) => update("email", e.target.value)}
               />
             </div>
 
@@ -210,6 +290,44 @@ function Checkout() {
 
             <h2 style={{ fontSize: 16, marginTop: 10, marginBottom: 14 }}>2. Payment Method</h2>
             <div style={{ background: "#FAFAF8", border: "1px solid #e0e0e0", borderRadius: 8, padding: "14px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
+              
+              {/* PayHere Sandbox Option */}
+              <label style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 12,
+                cursor: "pointer",
+                fontSize: 14,
+                padding: "12px",
+                border: paymentMethod === "PayHere" ? "2px solid #2F4C7A" : "1px solid #d4d4d4",
+                borderRadius: 8,
+                background: paymentMethod === "PayHere" ? "#F0F4FA" : "#fff",
+                transition: "all 0.15s ease"
+              }}>
+                <input
+                  type="radio"
+                  name="paymentMethod"
+                  value="PayHere"
+                  checked={paymentMethod === "PayHere"}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  style={{ marginTop: 4 }}
+                />
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+                    <strong>PayHere (Online Payment / Card)</strong>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <span style={{ fontSize: 10, background: "#004B8D", color: "#fff", fontWeight: 700, padding: "2px 6px", borderRadius: 4 }}>PayHere</span>
+                      <span style={{ fontSize: 10, background: "#1A1F71", color: "#fff", fontWeight: 700, padding: "2px 6px", borderRadius: 4 }}>VISA</span>
+                      <span style={{ fontSize: 10, background: "#EB001B", color: "#fff", fontWeight: 700, padding: "2px 6px", borderRadius: 4 }}>MasterCard</span>
+                      <span style={{ fontSize: 10, background: "#28a745", color: "#fff", fontWeight: 600, padding: "2px 6px", borderRadius: 4 }}>Sandbox</span>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#555", marginTop: 4 }}>
+                    Official Sri Lankan Payment Gateway. Supports credit/debit test cards with real-time hash verification.
+                  </div>
+                </div>
+              </label>
+
               <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 14 }}>
                 <input
                   type="radio"
@@ -238,19 +356,6 @@ function Checkout() {
                 </div>
               </label>
 
-              <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 14 }}>
-                <input
-                  type="radio"
-                  name="paymentMethod"
-                  value="Card Payment"
-                  checked={paymentMethod === "Card Payment"}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                />
-                <div>
-                  <strong>Credit / Debit Card</strong>
-                  <div style={{ fontSize: 12, color: "#666" }}>Visa, MasterCard, or Amex on delivery.</div>
-                </div>
-              </label>
             </div>
           </div>
 
@@ -282,11 +387,21 @@ function Checkout() {
 
             <button
               className="modern-add-cart"
-              style={{ width: "100%", padding: "13px 0", fontSize: 15 }}
+              style={{
+                width: "100%",
+                padding: "13px 0",
+                fontSize: 15,
+                background: paymentMethod === "PayHere" ? "#004B8D" : "var(--navy)",
+                color: "#fff"
+              }}
               type="submit"
               disabled={submitting}
             >
-              {submitting ? "Placing Order..." : `Confirm Order (Rs. ${total})`}
+              {submitting
+                ? "Connecting..."
+                : paymentMethod === "PayHere"
+                ? `🔒 Pay with PayHere (Rs. ${total})`
+                : `Confirm Order (Rs. ${total})`}
             </button>
             <p style={{ fontSize: 11, color: "#888", textAlign: "center", marginTop: 10 }}>
               🔒 100% Safe &amp; Secure Order Processing

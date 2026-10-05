@@ -1,4 +1,5 @@
 import express from "express";
+import crypto from "node:crypto";
 import { query, get, run, db } from "../db.js";
 import { optionalAuthenticate, requireAdmin } from "../middleware/auth.js";
 
@@ -69,9 +70,11 @@ router.post("/", optionalAuthenticate, (req, res) => {
   try {
     db.exec("BEGIN TRANSACTION;");
 
+    const initialStatus = paymentMethod === "PayHere" ? "Pending Payment" : "Confirmed";
+
     run(
       `INSERT INTO orders (id, user_id, customer_name, customer_email, phone, address, city, postal, payment_method, subtotal, delivery_fee, total, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Confirmed')`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderId,
         userId,
@@ -85,6 +88,7 @@ router.post("/", optionalAuthenticate, (req, res) => {
         subtotal,
         delivery,
         total,
+        initialStatus,
       ]
     );
 
@@ -115,7 +119,29 @@ router.post("/", optionalAuthenticate, (req, res) => {
     db.exec("COMMIT;");
 
     const created = get("SELECT * FROM orders WHERE id = ?", [orderId]);
-    res.status(201).json(formatOrder(created));
+    const formatted = formatOrder(created);
+
+    if (paymentMethod === "PayHere") {
+      const merchantId = process.env.PAYHERE_MERCHANT_ID || "1238361";
+      const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET || "OTA0NDc2MTQwMjczMTY3MzU0NzEzMDU4NDk3MzM3NTg5NzczNzY=";
+      const formattedAmount = Number(total).toFixed(2);
+      const hashedSecret = crypto.createHash("md5").update(merchantSecret).digest("hex").toUpperCase();
+      const hash = crypto
+        .createHash("md5")
+        .update(merchantId + orderId + formattedAmount + "LKR" + hashedSecret)
+        .digest("hex")
+        .toUpperCase();
+
+      formatted.payhere = {
+        merchantId,
+        orderId,
+        amount: formattedAmount,
+        currency: "LKR",
+        hash,
+      };
+    }
+
+    res.status(201).json(formatted);
   } catch (err) {
     db.exec("ROLLBACK;");
     console.error("Failed to place order", err);
@@ -163,7 +189,7 @@ router.get("/:id", (req, res) => {
 // PATCH /api/orders/:id/status (Admin)
 router.patch("/:id/status", requireAdmin, (req, res) => {
   const { status } = req.body;
-  const validStatuses = ["Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"];
+  const validStatuses = ["Pending Payment", "Confirmed", "Processing", "Shipped", "Delivered", "Cancelled"];
 
   if (!status || !validStatuses.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${validStatuses.join(", ")}` });
@@ -182,6 +208,90 @@ router.patch("/:id/status", requireAdmin, (req, res) => {
     console.error("Failed to update order status", err);
     res.status(500).json({ error: "Failed to update order status." });
   }
+});
+
+// POST /api/orders/payhere-hash - Generate MD5 hash for PayHere payment
+router.post("/payhere-hash", (req, res) => {
+  const { orderId, amount, currency = "LKR" } = req.body;
+  if (!orderId || amount === undefined || amount === null) {
+    return res.status(400).json({ error: "orderId and amount are required" });
+  }
+
+  const merchantId = process.env.PAYHERE_MERCHANT_ID || "1238361";
+  const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET || "OTA0NDc2MTQwMjczMTY3MzU0NzEzMDU4NDk3MzM3NTg5NzczNzY=";
+  const formattedAmount = Number(amount).toFixed(2);
+  const hashedSecret = crypto.createHash("md5").update(merchantSecret).digest("hex").toUpperCase();
+  const hash = crypto
+    .createHash("md5")
+    .update(merchantId + orderId + formattedAmount + currency + hashedSecret)
+    .digest("hex")
+    .toUpperCase();
+
+  res.json({
+    merchantId,
+    orderId,
+    amount: formattedAmount,
+    currency,
+    hash,
+  });
+});
+
+// POST /api/orders/:id/confirm-payment - Confirm successful PayHere payment
+router.post("/:id/confirm-payment", (req, res) => {
+  const existing = get("SELECT id FROM orders WHERE id = ?", [req.params.id]);
+  if (!existing) {
+    return res.status(404).json({ error: "Order not found." });
+  }
+
+  try {
+    run("UPDATE orders SET status = 'Confirmed' WHERE id = ?", [req.params.id]);
+    const updated = get("SELECT * FROM orders WHERE id = ?", [req.params.id]);
+    res.json(formatOrder(updated));
+  } catch (err) {
+    console.error("Failed to confirm order payment", err);
+    res.status(500).json({ error: "Failed to confirm payment." });
+  }
+});
+
+// POST /api/orders/payhere-notify - PayHere IPN Webhook
+router.post("/payhere-notify", (req, res) => {
+  const {
+    merchant_id,
+    order_id,
+    payment_id,
+    payhere_amount,
+    payhere_currency,
+    status_code,
+    md5sig,
+  } = req.body;
+
+  const merchantSecret = process.env.PAYHERE_MERCHANT_SECRET || "OTA0NDc2MTQwMjczMTY3MzU0NzEzMDU4NDk3MzM3NTg5NzczNzY=";
+  const hashedSecret = crypto.createHash("md5").update(merchantSecret).digest("hex").toUpperCase();
+  const localMd5sig = crypto
+    .createHash("md5")
+    .update(
+      (merchant_id || "") +
+      (order_id || "") +
+      (payhere_amount || "") +
+      (payhere_currency || "") +
+      (status_code || "") +
+      hashedSecret
+    )
+    .digest("hex")
+    .toUpperCase();
+
+  if (localMd5sig === md5sig) {
+    if (Number(status_code) === 2) {
+      run("UPDATE orders SET status = 'Confirmed' WHERE id = ?", [order_id]);
+      console.log(`[PayHere IPN] Payment verified for Order ${order_id} (Payment ID: ${payment_id})`);
+    } else {
+      console.log(`[PayHere IPN] Status ${status_code} received for Order ${order_id}`);
+    }
+  } else {
+    console.warn(`[PayHere IPN] Invalid signature for Order ${order_id}`);
+  }
+
+  res.sendStatus(200);
 });
 
 export default router;
