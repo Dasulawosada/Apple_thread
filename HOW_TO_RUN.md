@@ -81,7 +81,7 @@ Browser එකේ පහත link එක විවෘත කරන්න:
 
 ---
 
-## 📁 Clean File Structure (ගොනු සැකැස්ම)
+## 📁 Clean File Structure 
 
 ```
 apple-thread-full/
